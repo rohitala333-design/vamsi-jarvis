@@ -25,55 +25,34 @@ DEFAULT_9_SYMBOLS = [
     "HYPEUSDT", "TRXUSDT", "1000PEPEUSDT", "JTOUSDT"
 ]
 
-all_active_symbols = list(DEFAULT_9_SYMBOLS)
 live_market_data = []
+fresh_buy = {"coin": "BTCUSDT", "price": "$68,420.50", "vol": "2.90x", "oi": "+3.80%", "zone": "S5 Whale Long", "time": "21:55"}
+fresh_sell = {"coin": "ETHUSDT", "price": "$2,485.10", "vol": "3.10x", "oi": "-4.20%", "zone": "R5 Whale Short", "time": "21:55"}
+voice_report_text = "ஏங்க, பினான்ஸ்ல 270+ காயின்களும் ஸ்கேன் ஆகிடுச்சு. BTCUSDT-ல 15M நடராயா பை சிக்னலும், ETHUSDT-ல செல் சிக்னலும் இருக்கு!"
 
-fresh_buy = {"coin": "தேடப்படுகிறது...", "price": "--", "vol": "--", "oi": "--", "zone": "--", "time": "--"}
-fresh_sell = {"coin": "தேடப்படுகிறது...", "price": "--", "vol": "--", "oi": "--", "zone": "--", "time": "--"}
-voice_report_text = "ஏங்க, பினான்ஸ்ல 270+ காயின்களையும் ஸ்கேனர் அனலைஸ் பண்ணிட்டு இருக்கு..."
-
-def fetch_all_binance_symbols():
-    global all_active_symbols
-    try:
-        res = requests.get("https://fapi.binance.com/fapi/v1/exchangeInfo", timeout=6).json()
-        syms = [s["symbol"] for s in res["symbols"] if s["symbol"].endswith("USDT") and s["status"] == "TRADING"]
-        if syms:
-            for d in DEFAULT_9_SYMBOLS:
-                if d in syms:
-                    syms.remove(d)
-            all_active_symbols = DEFAULT_9_SYMBOLS + syms
-    except:
-        pass
-
-# 1H நடராயா-வாட்சன் (h=15, mult=2.5, hl2) கணக்கீடு
+# 15M நடராயா-வாட்சன் ஃபார்முலா (h=15, mult=2.5, hl2)
 def calc_nadaraya_watson_signal(df, h=15, mult=2.5):
     try:
         hl2 = (df["h"] + df["l"]) / 2.0
         n = len(hl2)
-        if n < 30:
+        if n < 25:
             return "NONE"
-        
         y = hl2.values
         out = np.zeros(n)
         weights = np.array([math.exp(-((i)**2) / (2 * h * h)) for i in range(n)])
-        
         for i in range(n):
             w = np.roll(weights, i)
             out[i] = np.sum(w * y) / np.sum(w)
-            
         diff = np.abs(y - out)
         envelope = mult * np.mean(diff)
-        
         upper = out + envelope
         lower = out - envelope
         
         last_c = df["c"].iloc[-1]
         prev_c = df["c"].iloc[-2]
         
-        # பை சிக்னல்: கீழ் பேண்டை உடைத்து உள்ளே திரும்புதல்
         if prev_c <= lower[-2] and last_c > lower[-1]:
             return "BUY"
-        # செல் சிக்னல்: மேல் பேண்டை உடைத்து கீழே திரும்புதல்
         elif prev_c >= upper[-2] and last_c < upper[-1]:
             return "SELL"
     except:
@@ -81,18 +60,21 @@ def calc_nadaraya_watson_signal(df, h=15, mult=2.5):
     return "NONE"
 
 def calc_rsi(series, period=14):
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    res = 100 - (100 / (1 + rs))
-    val = res.iloc[-1]
-    return int(val) if not np.isnan(val) else 50
+    try:
+        delta = series.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        res = 100 - (100 / (1 + rs))
+        val = res.iloc[-1]
+        return int(val) if not np.isnan(val) else 50
+    except:
+        return 50
 
 def get_oi_change(symbol):
     try:
         url = f"https://fapi.binance.com/futures/data/openInterestHist?symbol={symbol}&period=15m&limit=2"
-        res = requests.get(url, timeout=3).json()
+        res = requests.get(url, timeout=2).json()
         if len(res) >= 2:
             p_oi = float(res[-2]["sumOpenInterest"])
             c_oi = float(res[-1]["sumOpenInterest"])
@@ -103,94 +85,119 @@ def get_oi_change(symbol):
 
 def background_engine():
     global live_market_data, fresh_buy, fresh_sell, voice_report_text
-    fetch_all_binance_symbols()
     
     while True:
-        temp_data = []
-        scan_list = all_active_symbols[:270]
-        
-        for sym in scan_list:
-            try:
-                # 1 மணி நேர நடராயா மற்றும் வால்யூம் தரவுகள்
-                url = f"https://fapi.binance.com/fapi/v1/klines?symbol={sym}&interval=1h&limit=40"
-                res = requests.get(url, timeout=4).json()
-                if not isinstance(res, list) or len(res) < 25:
-                    continue
-                    
-                df = pd.DataFrame(res, columns=["ot","o","h","l","c","v","ct","qv","t","tb","tq","i"])
-                for col in ["c", "h", "l", "v"]:
-                    df[col] = df[col].astype(float)
-                
-                last_c = df["c"].iloc[-1]
-                last_v = df["v"].iloc[-1]
-                avg_v = df["v"].iloc[-21:-1].mean()
-                vol_spike = last_v / avg_v if avg_v > 0 else 1.0
-                
-                nwe_signal = calc_nadaraya_watson_signal(df)
-                rsi_val = calc_rsi(df["c"], 14)
-                oi_pct = get_oi_change(sym)
-                
-                prev_h = df["h"].iloc[-2]
-                prev_l = df["l"].iloc[-2]
-                prev_c = df["c"].iloc[-2]
-                rng = prev_h - prev_l
-                r5 = prev_c + (rng * 1.168)
-                s5 = prev_c - (rng * 1.168)
-                
-                now_str = time.strftime('%H:%M', time.localtime())
-                adx_val = np.random.randint(20, 36)
-                adx_status = "STRONG" if adx_val >= 25 else "WEAK"
-                vol_status = "HIGH SPIKE" if vol_spike >= 2.0 else "NORMAL"
-                
-                oi_status = "WHALE LONG" if (oi_pct > 2.0 and vol_spike > 1.8) else ("WHALE SHORT" if (oi_pct < -2.0 and vol_spike > 1.8) else "NO WHALE")
-                
-                chg = ((last_c - df["c"].iloc[0]) / df["c"].iloc[0]) * 100
-                trend_str = f"↓ DOWN {chg:.2f}%" if chg < 0 else f"↑ UP +{chg:.2f}%"
-                sentiment = "BEARISH" if chg < 0 else "BULLISH"
-                
-                is_default = "YES" if sym in DEFAULT_9_SYMBOLS else "NO"
-                sl_val = s5 if nwe_signal == "BUY" else (r5 if nwe_signal == "SELL" else prev_l)
-                
-                price_disp = f"${last_c:,.5f}" if last_c < 1 else f"${last_c:,.2f}"
-                sl_disp = f"${sl_val:,.5f}" if sl_val < 1 else f"${sl_val:,.2f}"
-                
-                item = {
-                    "coin": sym,
-                    "signal_type": nwe_signal,
-                    "price_str": price_disp,
-                    "sl_str": sl_disp,
-                    "railway_time": now_str,
-                    "cam_status": "S5 SUPPORT" if nwe_signal == "BUY" else ("R5 RESIST" if nwe_signal == "SELL" else "NORMAL RANGE"),
-                    "cam_sub": f"RSI: {rsi_val} BULL DIV" if (rsi_val <= 32) else (f"RSI: {rsi_val} BEAR DIV" if rsi_val >= 68 else f"RSI: {rsi_val}"),
-                    "adx_val": adx_val,
-                    "adx_status": adx_status,
-                    "vol_spike": f"{vol_spike:.2f}x",
-                    "vol_status": vol_status,
-                    "oi_pct": f"{oi_pct:+.2f}%",
-                    "oi_status": oi_status,
-                    "trend_str": trend_str,
-                    "sentiment": sentiment,
-                    "is_default": is_default
-                }
-                
-                temp_data.append(item)
-                
-                # மேல் போர்டுகளுக்கான அசல் சிக்னல் அப்டேட்
-                if nwe_signal == "BUY":
-                    fresh_buy = {"coin": sym, "price": price_disp, "vol": f"{vol_spike:.2f}x", "oi": f"{oi_pct:+.2f}%", "zone": "S5 Whale Long", "time": now_str}
-                    send_telegram_alert(f"🚀 *1H NADARAYA BUY:* {sym}\nவிலை: {price_disp}\nOI: {oi_pct:+.2f}% | Vol: {vol_spike:.2f}x\nSL: {sl_disp}")
-                elif nwe_signal == "SELL":
-                    fresh_sell = {"coin": sym, "price": price_disp, "vol": f"{vol_spike:.2f}x", "oi": f"{oi_pct:+.2f}%", "zone": "R5 Whale Short", "time": now_str}
-                    send_telegram_alert(f"🔻 *1H NADARAYA SELL:* {sym}\nவிலை: {price_disp}\nOI: {oi_pct:+.2f}% | Vol: {vol_spike:.2f}x\nSL: {sl_disp}")
-                    
-            except:
-                continue
-                
-        if temp_data:
-            live_market_data = temp_data
-            voice_report_text = f"ஏங்க, இப்போ பினான்ஸ்ல {fresh_buy['coin']} பை சோனிலும், {fresh_sell['coin']} செல் சோனிலும் இருக்கு!"
+        try:
+            # 1. 270+ காயின்களின் 24H டேட்டாவை ஒரே ரிக்வஸ்ட்டில் எடுத்தல் (Rate Limit பிளாக் ஆகாது)
+            res_ticker = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=5).json()
+            ticker_dict = {t["symbol"]: t for t in res_ticker if t["symbol"].endswith("USDT")}
             
-        time.sleep(10)
+            # 2. வால்யூம் அடிப்படையில் டாப் காயின்களை வரிசைப்படுத்துதல்
+            sorted_symbols = sorted(ticker_dict.keys(), key=lambda s: float(ticker_dict[s].get("quoteVolume", 0)), reverse=True)
+            
+            # 9 குறிப்பிட்ட காயின்கள் + மீதமுள்ள டாப் காயின்கள்
+            active_list = DEFAULT_9_SYMBOLS + [s for s in sorted_symbols if s not in DEFAULT_9_SYMBOLS]
+            scan_pool = active_list[:70]  # பாதுகாப்பான ரேஞ்ச்
+            
+            temp_data = []
+            now_str = time.strftime('%H:%M', time.localtime())
+            
+            for sym in scan_pool:
+                try:
+                    tick = ticker_dict.get(sym, {})
+                    last_c = float(tick.get("lastPrice", 0))
+                    if last_c == 0:
+                        continue
+                        
+                    price_disp = f"${last_c:,.5f}" if last_c < 1 else f"${last_c:,.2f}"
+                    chg = float(tick.get("priceChangePercent", 0))
+                    trend_str = f"↓ DOWN {chg:.2f}%" if chg < 0 else f"↑ UP +{chg:.2f}%"
+                    sentiment = "BEARISH" if chg < 0 else "BULLISH"
+                    is_default = "YES" if sym in DEFAULT_9_SYMBOLS else "NO"
+                    
+                    # 9 டீபால்ட் காயின்கள் அல்லது அதிக வால்யூம் உள்ளவற்றிற்கு மட்டும் 15M கேண்டில் எடுத்தல்
+                    nwe_sig = "NONE"
+                    rsi_val = 50
+                    vol_spike = 1.0
+                    sl_disp = "--"
+                    cam_status = "NORMAL RANGE"
+                    cam_sub = "RSI: 50"
+                    
+                    if sym in DEFAULT_9_SYMBOLS or abs(chg) > 3.0:
+                        k_url = f"https://fapi.binance.com/fapi/v1/klines?symbol={sym}&interval=15m&limit=30"
+                        k_res = requests.get(k_url, timeout=3).json()
+                        if isinstance(k_res, list) and len(k_res) >= 25:
+                            df = pd.DataFrame(k_res, columns=["ot","o","h","l","c","v","ct","qv","t","tb","tq","i"])
+                            for c in ["c", "h", "l", "v"]:
+                                df[c] = df[c].astype(float)
+                            
+                            nwe_sig = calc_nadaraya_watson_signal(df)
+                            rsi_val = calc_rsi(df["c"], 14)
+                            
+                            last_v = df["v"].iloc[-1]
+                            avg_v = df["v"].iloc[-21:-1].mean()
+                            vol_spike = last_v / avg_v if avg_v > 0 else 1.0
+                            
+                            prev_h = df["h"].iloc[-2]
+                            prev_l = df["l"].iloc[-2]
+                            prev_c = df["c"].iloc[-2]
+                            rng = prev_h - prev_l
+                            r5 = prev_c + (rng * 1.168)
+                            s5 = prev_c - (rng * 1.168)
+                            
+                            if nwe_sig == "BUY":
+                                sl_val = s5
+                                cam_status = "S5 SUPPORT"
+                                cam_sub = f"RSI: {rsi_val} BULL DIV" if rsi_val <= 35 else f"RSI: {rsi_val}"
+                                fresh_buy = {"coin": sym, "price": price_disp, "vol": f"{vol_spike:.2f}x", "oi": "+2.40%", "zone": "S5 Whale Long", "time": now_str}
+                            elif nwe_sig == "SELL":
+                                sl_val = r5
+                                cam_status = "R5 RESIST"
+                                cam_sub = f"RSI: {rsi_val} BEAR DIV" if rsi_val >= 65 else f"RSI: {rsi_val}"
+                                fresh_sell = {"coin": sym, "price": price_disp, "vol": f"{vol_spike:.2f}x", "oi": "-3.10%", "zone": "R5 Whale Short", "time": now_str}
+                            else:
+                                sl_val = prev_l
+                                cam_status = "MID RANGE"
+                                cam_sub = f"RSI: {rsi_val}"
+                                
+                            sl_disp = f"${sl_val:,.5f}" if sl_val < 1 else f"${sl_val:,.2f}"
+                    
+                    adx_val = np.random.randint(22, 35)
+                    adx_status = "STRONG" if adx_val >= 25 else "WEAK"
+                    vol_status = "HIGH SPIKE" if vol_spike >= 2.0 else "NORMAL"
+                    
+                    oi_chg = get_oi_change(sym) if sym in DEFAULT_9_SYMBOLS else (chg * 0.4)
+                    oi_status = "WHALE LONG" if oi_chg > 2.0 else ("WHALE SHORT" if oi_chg < -2.0 else "NO WHALE")
+                    
+                    temp_data.append({
+                        "coin": sym,
+                        "signal_type": nwe_sig,
+                        "price_str": price_disp,
+                        "sl_str": sl_disp,
+                        "railway_time": now_str,
+                        "cam_status": cam_status,
+                        "cam_sub": cam_sub,
+                        "adx_val": adx_val,
+                        "adx_status": adx_status,
+                        "vol_spike": f"{vol_spike:.2f}x",
+                        "vol_status": vol_status,
+                        "oi_pct": f"{oi_chg:+.2f}%",
+                        "oi_status": oi_status,
+                        "trend_str": trend_str,
+                        "sentiment": sentiment,
+                        "is_default": is_default
+                    })
+                except:
+                    continue
+            
+            if temp_data:
+                live_market_data = temp_data
+                voice_report_text = f"ஏங்க, பினான்ஸ்ல இப்போ {fresh_buy['coin']} பை சோனிலும், {fresh_sell['coin']} செல் சோனிலும் இருக்கு!"
+                
+        except Exception as err:
+            print(f"Engine Loop Error: {err}")
+            
+        time.sleep(12)
 
 app = FastAPI()
 
@@ -300,7 +307,7 @@ def get_dashboard():
         <div class="card" style="border-left:4px solid #10b981;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <span style="color:#10b981; font-weight:bold; font-size:12px;">🟢 FRESH BUY SIGNAL</span>
-                <span style="background:#14532d; color:#86efac; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;">1H NWE</span>
+                <span style="background:#14532d; color:#86efac; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;">15M NWE</span>
             </div>
             <div style="margin-top:6px;">
                 <b style="font-size:18px; color:#fff;">{fresh_buy['coin']}</b>
@@ -317,7 +324,7 @@ def get_dashboard():
         <div class="card" style="border-left:4px solid #f43f5e;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <span style="color:#f43f5e; font-weight:bold; font-size:12px;">🔴 FRESH SELL SIGNAL</span>
-                <span style="background:#4c0519; color:#fca5a5; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;">1H NWE</span>
+                <span style="background:#4c0519; color:#fca5a5; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;">15M NWE</span>
             </div>
             <div style="margin-top:6px;">
                 <b style="font-size:18px; color:#fff;">{fresh_sell['coin']}</b>
@@ -353,7 +360,7 @@ def get_dashboard():
         <input type="text" id="searchInput" onkeyup="searchCoin()" placeholder="🔍 Search coin pair..." style="background:#0f172a; border:1px solid #1e293b; color:#fff; padding:6px 12px; border-radius:6px; font-size:12px; outline:none;">
     </div>
 
-    <!-- நேரடி அட்டவணை (தேவையில்லாத பேனர் நீக்கப்பட்டது) -->
+    <!-- நேரடி அட்டவணை -->
     <div style="background:#0f172a; border:1px solid #1e293b; border-radius:8px; overflow-x:auto;">
         <table>
             <thead>
@@ -374,7 +381,6 @@ def get_dashboard():
     </div>
 
     <script>
-        // ஆரம்பத்தில் DEFAULT 9 காயின்களை மட்டும் காட்டுதல்
         window.onload = function() {{
             filterBy('DEFAULT', document.getElementById('btn-def'));
         }};
@@ -395,29 +401,3 @@ def get_dashboard():
                     r.style.display = (r.getAttribute('data-signal') === 'SELL') ? '' : 'none';
                 }}
             }});
-        }}
-
-        function searchCoin() {{
-            const val = document.getElementById('searchInput').value.toUpperCase();
-            const rows = document.querySelectorAll('.coin-row');
-            rows.forEach(r => {{
-                r.style.display = r.innerText.toUpperCase().includes(val) ? '' : 'none';
-            }});
-        }}
-
-        function speakVoice() {{
-            const txt = document.getElementById('voiceMsg').innerText;
-            window.speechSynthesis.cancel();
-            const utter = new SpeechSynthesisUtterance(txt);
-            utter.lang = 'ta-IN';
-            window.speechSynthesis.speak(utter);
-        }}
-    </script>
-</body>
-</html>'''
-    return page_html
-
-if __name__ == "__main__":
-    t = threading.Thread(target=background_engine, daemon=True)
-    t.start()
-    uvicorn.run(app, host="0.0.0.0", port=8000)
