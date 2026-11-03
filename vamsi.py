@@ -7,9 +7,6 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import uvicorn
 
-# ========================================================
-# 1. டெலிகிராம் போட் அமைப்பு
-# ========================================================
 TELEGRAM_BOT_TOKEN = "9199724597:AAFkF9NPKB9hRbTUGki7ZUmnDg3ffi2Qv-Y"
 TELEGRAM_CHAT_ID = "6193939481"
 
@@ -21,8 +18,30 @@ def send_telegram_alert(message):
     except Exception as e:
         print(f"Telegram Error: {e}")
 
-# குளோபல் டேட்டா
-live_market_data = []
+live_market_data = [
+    {
+        "coin": "BZUSDT", "signal_type": "SELL", "price_str": "$105.25", "sl_str": "107.96",
+        "railway_time": time.strftime('%H:%M', time.localtime()), "cam_status": "S5 SWEEP",
+        "cam_sub": "RSI: 30 BULL DIV", "adx_val": 33, "adx_status": "STRONG",
+        "vol_spike": "15.95x", "vol_status": "HIGH SPIKE", "oi_pct": "-6.34%",
+        "oi_status": "WHALE SHORT", "trend_str": "↓ DOWN -6.06%", "sentiment": "BEARISH"
+    },
+    {
+        "coin": "COTIUSDT", "signal_type": "SELL", "price_str": "$0.0100", "sl_str": "0.01031",
+        "railway_time": time.strftime('%H:%M', time.localtime()), "cam_status": "S5 SWEEP",
+        "cam_sub": "RSI: 43", "adx_val": 23, "adx_status": "WEAK",
+        "vol_spike": "8.17x", "vol_status": "NORMAL", "oi_pct": "-3.35%",
+        "oi_status": "WHALE SHORT", "trend_str": "↓ DOWN -2.07%", "sentiment": "BEARISH"
+    },
+    {
+        "coin": "SOXSUSDT", "signal_type": "BUY", "price_str": "$52.66", "sl_str": "50.80",
+        "railway_time": time.strftime('%H:%M', time.localtime()), "cam_status": "S5 SUPPORT",
+        "cam_sub": "RSI: 32 BULL DIV", "adx_val": 28, "adx_status": "STRONG",
+        "vol_spike": "3.15x", "vol_status": "HIGH SPIKE", "oi_pct": "+0.69%",
+        "oi_status": "WHALE LONG", "trend_str": "↑ UP +4.15%", "sentiment": "BULLISH"
+    }
+]
+
 fresh_buy = {"coin": "SOXSUSDT", "price": "$52.66", "vol": "3.15x", "oi": "+0.69%", "zone": "S5 Whale Long", "time": "21:30"}
 fresh_sell = {"coin": "BZUSDT", "price": "$105.33", "vol": "15.95x", "oi": "-6.34%", "zone": "R5 Whale Short", "time": "21:30"}
 voice_report_text = "ஏங்க, இப்போ BZUSDT காயின்ல திமிங்கலங்க ஷார்ட் போயிருக்காங்க. 105.33 பிரைஸுக்கு ரிஜெக்ஷன் ஆயிருக்கு! SOXSUSDT காயின்ல லாங் வந்திருக்காங்க!"
@@ -46,9 +65,6 @@ def get_oi_change(symbol):
         pass
     return 0.0
 
-# ========================================================
-# 2. பின்னணி ஸ்கேனர் இன்ஜின் (Background Scanner)
-# ========================================================
 def background_scanner():
     global live_market_data, fresh_buy, fresh_sell, voice_report_text
     watchlist = ["BZUSDT", "COTIUSDT", "SOXSUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "TRXUSDT", "HYPEUSDT", "ADAUSDT", "DOGEUSDT"]
@@ -60,7 +76,6 @@ def background_scanner():
                 url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=15m&limit=35"
                 res = requests.get(url, timeout=4).json()
                 df = pd.DataFrame(res, columns=["ot","o","h","l","c","v","ct","qv","t","tb","tq","i"])
-                
                 df["c"] = df["c"].astype(float)
                 df["h"] = df["h"].astype(float)
                 df["l"] = df["l"].astype(float)
@@ -129,9 +144,6 @@ def background_scanner():
             live_market_data = temp
         time.sleep(15)
 
-# ========================================================
-# 3. லவபில் இன்டர்பேஸ் (Lovable UI)
-# ========================================================
 app = FastAPI()
 
 @app.get("/", response_class=HTMLResponse)
@@ -204,16 +216,17 @@ def get_dashboard():
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vamsi Jarvis AI</title>
-    <meta http-equiv="refresh" content="12">
+    <meta http-equiv="refresh" content="15">
     <style>
         * {{ box-sizing: border-box; }}
         body {{ background:#060b13; color:#f8fafc; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin:0; padding:16px; }}
-        .header-bar {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid #1e293b; padding-bottom:12px; }}
+        .header-bar {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid #1e293b; padding-bottom:12px; flex-wrap:wrap; gap:10px; }}
         .cards-grid {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:14px; margin-bottom:16px; }}
         .card {{ background:#0f172a; border:1px solid #1e293b; border-radius:12px; padding:14px; }}
         .btn-pill {{ background:#1e293b; color:#94a3b8; border:1px solid #334155; padding:8px 14px; border-radius:8px; font-size:12px; font-weight:bold; cursor:pointer; }}
         .btn-active {{ background:#0284c7 !important; color:#fff !important; border-color:#38bdf8 !important; }}
         .btn-sell-active {{ background:#e11d48 !important; color:#fff !important; border-color:#f43f5e !important; }}
+        .btn-refresh {{ background:#10b981; color:#fff; border:none; padding:7px 14px; border-radius:8px; font-size:12px; font-weight:bold; cursor:pointer; }}
         table {{ width:100%; border-collapse:collapse; text-align:left; }}
         th {{ background:#0b1322; color:#64748b; font-size:11px; padding:12px; text-transform:uppercase; letter-spacing:0.5px; border-bottom:1px solid #1e293b; }}
     </style>
@@ -224,11 +237,15 @@ def get_dashboard():
             <h1 style="margin:0; font-size:22px; color:#38bdf8; font-weight:900; letter-spacing:1px;">VAMSI JARVIS AI</h1>
             <div style="font-size:11px; color:#64748b;">Binance Futures 270+ USDT-M Real-Time Scanner</div>
         </div>
-        <span style="background:#064e3b; color:#34d399; font-size:11px; padding:5px 12px; border-radius:20px; font-weight:bold;">
-            ● LIVE SCANNER 22:00 IST
-        </span>
+        <div style="display:flex; align-items:center; gap:8px;">
+            <button class="btn-refresh" onclick="location.reload()">🔄 REFRESH NOW</button>
+            <span style="background:#064e3b; color:#34d399; font-size:11px; padding:6px 12px; border-radius:20px; font-weight:bold;">
+                ● LIVE 22:00 IST
+            </span>
+        </div>
     </div>
 
+    <!-- மேல் 3 போர்டுகள் -->
     <div class="cards-grid">
         <div class="card" style="border-left:4px solid #10b981;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -275,6 +292,7 @@ def get_dashboard():
         </div>
     </div>
 
+    <!-- பட்டன்கள் & சர்ச் பார் -->
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
             <button class="btn-pill btn-active" onclick="filterTable('ALL', this)">DEFAULT 9 COINS</button>
@@ -282,9 +300,10 @@ def get_dashboard():
             <button class="btn-pill" onclick="filterTable('BUY', this)" style="color:#4ade80;">🟢 1H FRESH BUYS ({buy_count})</button>
             <button class="btn-pill" onclick="filterTable('SELL', this)" style="color:#f43f5e;">🔴 1H FRESH SELLS ({sell_count})</button>
         </div>
-        <input type="text" onkeyup="searchCoin(this.value)" placeholder="🔍 Search coin pair..." style="background:#0f172a; border:1px solid #1e293b; color:#fff; padding:8px 14px; border-radius:8px; font-size:12px; outline:none;">
+        <input type="text" id="searchInput" onkeyup="searchCoin()" placeholder="🔍 Search coin pair..." style="background:#0f172a; border:1px solid #1e293b; color:#fff; padding:8px 14px; border-radius:8px; font-size:12px; outline:none;">
     </div>
 
+    <!-- 7 முக்கிய மார்க்கெட் தூண்கள் அட்டவணை -->
     <div style="background:#0f172a; border:1px solid #1e293b; border-radius:12px; overflow-x:auto;">
         <div style="padding:12px 14px; border-bottom:1px solid #1e293b; font-weight:800; font-size:13px; color:#94a3b8;">
             7 முக்கிய மார்க்கெட் தூண்கள் (INSTANT CONFLUENCE TABLE)
@@ -321,8 +340,8 @@ def get_dashboard():
             }});
         }}
 
-        function searchCoin(query) {{
-            query = query.toUpperCase();
+        function searchCoin() {{
+            const query = document.getElementById('searchInput').value.toUpperCase();
             const rows = document.querySelectorAll('.coin-row');
             rows.forEach(r => {{
                 r.style.display = r.innerText.toUpperCase().includes(query) ? '' : 'none';
